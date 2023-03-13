@@ -19,7 +19,7 @@ global watered
 watered = 0 
 
 global tolerance
-tolerance = 650
+tolerance = 440
 
 sg.theme('DarkTeal')
 sg.set_options(font=("Arial Bold", 14))
@@ -98,11 +98,14 @@ def takePhoto():
 def updateGUI(arduinoMeasurements):
   window["temp"].update("Temperature: "+str(arduinoMeasurements[0])+"C")
   window["humidity"].update("Humidity: "+str(arduinoMeasurements[1])+"%")
-  window["moisture"].update("Moisture: "+str(arduinoMeasurements[3])+"%")
+  #assuming that moisture has a minimum of 400 and a max of 800
+  #calculate percentage of soil moisture
+  moisture = ((int(arduinoMeasurements[3])-400)/400)*100
+  window["moisture"].update("Moisture: "+str(moisture)+"%")
   window["waterLevel"].update("Water level: "+str(arduinoMeasurements[4])+"cm")
 
 
-def regression():
+def regression(tolerance):
   #choose random forest regression
   regressor = RandomForestRegressor(n_estimators=1, random_state=0)
 
@@ -205,7 +208,6 @@ def getMeasurements ():
             logToCSV(arduinoMeasurements[0], arduinoMeasurements[1],arduinoMeasurements[2],arduinoMeasurements[3],arduinoMeasurements[4])
             updateGUI(arduinoMeasurements)
             return arduinoMeasurements
-            break  
 
 def pump():
   if __name__ == '__main__':
@@ -224,6 +226,8 @@ def pump():
 
 global number
 number = ''
+
+timeUntilDry = 0
 
 while True: 
   if event == sg.WIN_CLOSED:
@@ -245,12 +249,8 @@ while True:
 
   if event == sg.TIMEOUT_KEY:
     timeSeconds = getTime()
-    
-    pump()
-    sleep(100)
-
+      
     #check if morning to water plant
-    timeUntilDry = 121892
     if timeSeconds >27600 and timeSeconds < 27605:
       #take a daily picture of the plant
     
@@ -262,22 +262,22 @@ while True:
       watered = 0 
       #get measurements and check if water moisture is below certain value
       arduinoMeasurements = getMeasurements()
-      #CHANGE VALUE WITH TESTING!!!!!!!!!!!!!!!!!!!!!!!
-      if arduinoMeasurements[3] > tolerance:
+      if int(arduinoMeasurements[3]) < tolerance:
         #water moisture is too low 
         pump()
         watered += 1
-        #get data for regression prediction 
-        for x in range (0,50):
-          getMeasurements()
-          sleep(30)
-        timeUntilDry, regressor = regression()
-  
+      #get data for regression prediction 
+      for x in range (0,50):
+        getMeasurements()
+        sleep(30)
+      timeUntilDry, regressor = regression(tolerance)
+
+
     #check if the water is be dry at this point 
     if timeUntilDry == timeSeconds and timeSeconds > 28800 and timeSeconds < 64800:
       arduinoMeasurements = getMeasurements()
       # don't water late in the afternoon (1800) 
-      if arduinoMeasurements[3] > tolerance:
+      if int(arduinoMeasurements[3]) < tolerance:
         #water moisture is too low 
         pump()
         watered += 1
@@ -285,7 +285,7 @@ while True:
         for x in range (0,50):
           getMeasurements()
           sleep(30)
-        timeUntilDry, regressor = regression()
+        timeUntilDry, regressor = regression(tolerance)
 
     #log data every 30 min
     if timeSeconds%1800==0:
@@ -293,30 +293,32 @@ while True:
       maximumTemperature.append(arduinoMeasurements[0])
       averageHumidity.append(arduinoMeasurements[1])
     
-    #check the accuracy of the prediction every 2 hours between 0800 and 1800
+      #check the accuracy of the prediction every 2 hours between 0800 and 1800
   
-    if timeSeconds%7200==0 and timeSeconds > 28800 and timeSeconds < 64800:
-      #get values to calculate percentage error
-      predicted = int(regressor.predict([[timeSeconds]]))
-      measured = arduinoMeasurements[3] 
-      percentageError = ((abs(predicted-measured))/measured)*100
-      #if error is too high recalculate regression
-      print(percentageError)
-      if percentageError > 30: 
-        for x in range (0,50):
-          getMeasurements()
-          sleep(30)
-        timeUntilDry, regressor = regression()
+      if timeSeconds%7200==0 and timeSeconds > 28800 and timeSeconds < 64800:
+        #get values to calculate percentage error
+        predicted = int(regressor.predict([[timeSeconds]]))
+        measured = arduinoMeasurements[3] 
+        percentageError = ((abs(predicted-measured))/measured)*100
+        #if error is too high recalculate regression
+        print(percentageError)
+        if percentageError > 30: 
+          for x in range (0,50):
+            getMeasurements()
+            sleep(30)
+          timeUntilDry, regressor = regression(tolerance)
     
     #at 1826 send text 
 
     if timeSeconds > 66360 and timeSeconds < 66540 and number != '':
-      maxtemp = (maximumTemperature.sort())[-1]
-      avHumidity = sum(averageHumidity)/len(averageHumidity)
 
+      maximumTemperature.sort()
+      maxtemp = maximumTemperature[-1]
+      avHumidity = sum(averageHumidity)/len(averageHumidity)
+      
       message = "Hi, " + name + " experienced a maximum temperature of " + str(maxtemp) + "C with an average humidity of " + str(avHumidity) + "%. " + name + " was watered: " + str(watered) + " times."
       #add message to fill up water 
-      if arduinoMeasurements[4] > 10:
+      #f arduinoMeasurements[4] > 10:
         message += " Warning your water supply is low!"
       sendText(message, number)
 
